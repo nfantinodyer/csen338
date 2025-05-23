@@ -51,14 +51,16 @@ def DecompressedEveryOther(img):
 
 if __name__ == "__main__":
     img = Image.open("image.png").convert("RGB")
-    #Original mage size: 860KB
+    #Original image size: 860KB
 
-    #compress rows by half:
+    #compress columns by half:
     compressedImage = CompressedEveryOther(img)
     compressedImage.show()
     compressedImage.save("CompressedEveryOther.png")
+    #compressed image size: 252KB
 
-    #decompress rows:
+    #decompress columns:
     decompressedImage = DecompressedEveryOther(compressedImage)
     decompressedImage.show()
     decompressedImage.save("DecompressedEveryOther.png")
+    #decompressed image size: 642KB
