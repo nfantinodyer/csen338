@@ -257,10 +257,171 @@ class SimilarityWorkflow:
             decompressedImg = SimilarityCompressor.DecompressSimilarity(packedPixels, removedList, w, h)
             decompressedImg.save(f"{folder}/Decompressed.bmp", format="BMP")
 
+class CertaintySimilarityCompressor:
+    def CompressWithCertainty(img, similarityThreshold, mode):
+        # gather dimensions and pixels
+        originalWidth, originalHeight = img.size
+        pixels = img.load()
+
+        # prepare removal mask and protected set
+        removeMask = [[False for _ in range(originalWidth)] for _ in range(originalHeight)]
+        protectedPositions = set()  # positions that cannot be removed
+
+        # compute tolerance
+        tolerance = (1.0 - similarityThreshold) * 255.0
+        # neighbor offsets
+        neighborOffsets = [(-1, -1), (0, -1), (1, -1),
+                           (-1,  0),          (1,  0),
+                           (-1,  1), (0,  1), (1,  1)]
+
+        # decide scan ranges based on mode
+        if mode == 'everyOtherRow':
+            scanHeight = range(0, originalHeight, 2)
+            scanWidth = range(0, originalWidth, 2)
+        elif mode == 'everyRow':
+            scanHeight = range(originalHeight)
+            scanWidth = range(0, originalWidth, 2)
+        else:  # full
+            scanHeight = range(originalHeight)
+            scanWidth = range(originalWidth)
+
+        # for each pixel, try to find smallest neighbor set giving acceptable average
+        for y in scanHeight:
+            for x in scanWidth:
+                # skip if already protected
+                if (x, y) in protectedPositions:
+                    continue
+
+                # collect valid neighbor positions
+                neighborList = []
+                for dx, dy in neighborOffsets:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < originalWidth and 0 <= ny < originalHeight:
+                        # do not use neighbors already marked removed
+                        if removeMask[ny][nx]:
+                            continue
+                        neighborList.append((nx, ny, pixels[nx, ny]))
+                if not neighborList:
+                    continue
+
+                # compute distance from each neighbor to current pixel
+                currR, currG, currB = pixels[x, y]
+                distanceList = []
+                for (nx, ny, (r, g, b)) in neighborList:
+                    diff = abs(r - currR) + abs(g - currG) + abs(b - currB)
+                    distanceList.append((diff, nx, ny, (r, g, b)))
+
+                # sort by closeness
+                distanceList.sort(key=lambda item: item[0])
+
+                # iterative selection of smallest set
+                selected = []
+                sumR = sumG = sumB = 0.0
+                for diff, nx, ny, (r, g, b) in distanceList:
+                    selected.append((nx, ny, (r, g, b)))
+                    sumR += r; sumG += g; sumB += b
+                    count = len(selected)
+                    avgR = sumR / count
+                    avgG = sumG / count
+                    avgB = sumB / count
+
+                    # check if average within tolerance
+                    if abs(avgR - currR) <= tolerance and abs(avgG - currG) <= tolerance and abs(avgB - currB) <= tolerance:
+                        # mark this pixel removable
+                        removeMask[y][x] = True
+                        # protect all used neighbors
+                        for px, py, _ in selected:
+                            protectedPositions.add((px, py))
+                        break
+
+        # pack each row and log removals
+        compressedPixels = []
+        removedPositions = []
+        for y in range(originalHeight):
+            rowData = []
+            for x in range(originalWidth):
+                if removeMask[y][x]:
+                    removedPositions.append((x, y))
+                else:
+                    rowData.append(pixels[x, y])
+            compressedPixels.append(rowData)
+
+        return compressedPixels, removedPositions, originalWidth, originalHeight
+
+    def DecompressSimilarityAdaptive(compressedPixels, removedPositions, originalWidth, originalHeight):
+        # same as original two-pass fill (or iterative fill) if desired
+        from PIL import Image
+        output = Image.new("RGB", (originalWidth, originalHeight))
+        outPx = output.load()
+        # first pass: shift back
+        removedMap = {}
+        for rx, ry in removedPositions:
+            removedMap.setdefault(ry, []).append(rx)
+        for y in range(originalHeight):
+            dataRow = compressedPixels[y]
+            idx = 0
+            removedRow = removedMap.get(y, [])
+            for x in range(originalWidth):
+                if x not in removedRow:
+                    outPx[x, y] = dataRow[idx]
+                    idx += 1
+        # second pass: simple neighbor average
+        neighborOffsets = [(-1, -1), (0, -1), (1, -1),
+                           (-1,  0),          (1,  0),
+                           (-1,  1), (0,  1), (1,  1)]
+        for x, y in removedPositions:
+            neighbors = []
+            for dx, dy in neighborOffsets:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < originalWidth and 0 <= ny < originalHeight:
+                    if ny in removedMap and nx in removedMap[ny]:
+                        continue
+                    neighbors.append(outPx[nx, ny])
+            if neighbors:
+                rSum = gSum = bSum = 0
+                cnt = 0
+                for (r, g, b) in neighbors:
+                    rSum += r; gSum += g; bSum += b; cnt += 1
+                outPx[x, y] = (int(rSum/cnt), int(gSum/cnt), int(bSum/cnt))
+        return output
+
+    
+    def CertaintySimilarityWorkflow(img):
+        for mode, folder in [
+            ('everyOtherRow', 'CertaintySimilarity/everyOtherRow'),
+            ('everyRow', 'CertaintySimilarity/everyRow'),
+            ('full', 'CertaintySimilarity/full')
+        ]:
+            packedPixels, removedList, w, h = CertaintySimilarityCompressor.CompressWithCertainty(img, similarityThreshold=0.60, mode=mode)
+            jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
+            jaggedImg.save(f"{folder}/compressedJagged.bmp", format="BMP")
+            blackfillImg = DemoUtilities.DemoCompressedBlackFillImage(packedPixels, removedList, w)
+            blackfillImg.save(f"{folder}/compressedBlackfill.bmp", format="BMP")
+            PixelReductionReporter.ReportPixelReduction(img, removedList)
+            decompressedImg = CertaintySimilarityCompressor.DecompressSimilarityAdaptive(packedPixels, removedList, w, h)
+            decompressedImg.save(f"{folder}/Decompressed.bmp", format="BMP")
 
 if __name__ == "__main__":
     img = Image.open("image.png").convert("RGB")
     img.save("image.bmp", format="BMP")
 
+    #Simply remove every other column and then to decompress it,
+    #I take the average of the neighbors of the removed pixels.
     ColumnCompression.ColumnCompression(img)
+
+    #I compare the similarity of each pixel to its neighbors
+    #and if the average of the neighbors is within a certain threshold (90% similarity),
+    #I remove the pixel and then to decompress it, I take the average of the neighbors of the removed pixels.
+    # This is done for every other row every other column, every row every other column, and then every row and every column.
+    # Since I remove so many pixels on the full mode, I tried to get it to try and fill in the gaps iteratively from the existing pixels.
+    # it ended up looking like an interesting abstract painting, but it gave me the idea to do something similar with trying to find
+    # the least amount of pixels to determine the closest average with less certainty.
     SimilarityWorkflow.RunSimilarity(img)
+
+    #added another class for a slightly different way to get similar pixels. 
+    # In this one we want to also see if the middle pixel can be found by the average, 
+    # but I instead find the least amount of pixels to determine the closest average to 60% certainty 
+    # and for all pixels used for the average they cant be removed, but the ones no longer used can be removed. 
+    # That doesn't mean they will be removed but that means that there is a possibility they could be. 
+    # All pixels that will be removed can not be used to generate the average for other pixels.
+    CertaintySimilarityCompressor.CertaintySimilarityWorkflow(img)
