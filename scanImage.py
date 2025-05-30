@@ -77,13 +77,13 @@ class SimilarityCompressor:
         # decide step ranges
         if mode == 'everyOtherRow':
             newHeight = range(0, originalHeight, 2)
-            newWidth  = range(0, originalWidth, 2)
+            newWidth = range(0, originalWidth, 2)
         elif mode == 'everyRow':
             newHeight = range(originalHeight)
-            newWidth  = range(0, originalWidth, 2)
+            newWidth = range(0, originalWidth, 2)
         elif mode == 'full':
             newHeight = range(originalHeight)
-            newWidth  = range(originalWidth)
+            newWidth = range(originalWidth)
 
         # mark pixels for removal
         for y in newHeight:
@@ -98,13 +98,13 @@ class SimilarityCompressor:
 
                 redSum = greenSum = blueSum = 0.0
                 for r, g, b in neighbors:
-                    redSum   += r
+                    redSum += r
                     greenSum += g
-                    blueSum  += b
-                count   = len(neighbors)
-                avgRed   = redSum   / count
+                    blueSum += b
+                count = len(neighbors)
+                avgRed = redSum / count
                 avgGreen = greenSum / count
-                avgBlue  = blueSum  / count
+                avgBlue = blueSum / count
 
                 currRed, currGreen, currBlue = pixels[x, y]
                 diffRed   = abs(currRed   - avgRed)
@@ -135,44 +135,68 @@ class SimilarityCompressor:
             removedMap.setdefault(ry, []).append(rx)
 
         output = Image.new("RGB", (originalWidth, originalHeight))
-        outPx  = output.load()
+        outPx = output.load()
 
         # first pass: shift back
         for y in range(originalHeight):
-            rowData     = compressedPixels[y]
-            dataIndex   = 0
+            rowData = compressedPixels[y]
+            dataIndex = 0
             thisRemoved = removedMap.get(y, [])
             for x in range(originalWidth):
                 if x not in thisRemoved:
                     outPx[x, y] = rowData[dataIndex]
                     dataIndex += 1
 
-        # second pass: fill gaps
-        neighborOffsets = [(-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)]
-        for x, y in removedPositions:
-            neighbors = []
-            for dx, dy in neighborOffsets:
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < originalWidth and 0 <= ny < originalHeight:
-                    if ny in removedMap and nx in removedMap[ny]:
-                        continue
-                    neighbors.append(outPx[nx, ny])
-            if neighbors:
-                redSum = greenSum = blueSum = 0
-                count  = 0
-                for col in neighbors:
-                    redSum   += col[0]
-                    greenSum += col[1]
-                    blueSum  += col[2]
-                    count    += 1
-                outPx[x, y] = (int(redSum/count), int(greenSum/count), int(blueSum/count))
+        # second pass: iterative neighbor-averaging
+        # start with all originally removed positions
+        unfilledPositions = set(removedPositions)
+        neighborOffsets = [(-1, -1), (0, -1), (1, -1),
+                           (-1,  0),          (1,  0),
+                           (-1,  1), (0,  1), (1,  1)]
+
+        # continue until no more unfilled can be averaged
+        while unfilledPositions:
+            filledThisRound = []
+            for (xPos, yPos) in list(unfilledPositions):
+                neighborColors = []
+                for dx, dy in neighborOffsets:
+                    nx = xPos + dx
+                    ny = yPos + dy
+                    if 0 <= nx < originalWidth and 0 <= ny < originalHeight:
+                        # skip if still unfilled
+                        if (nx, ny) in unfilledPositions:
+                            continue
+                        neighborColors.append(outPx[nx, ny])
+                if neighborColors:
+                    redSum = greenSum = blueSum = 0
+                    count = 0
+                    for (r, g, b) in neighborColors:
+                        redSum += r
+                        greenSum += g
+                        blueSum += b
+                        count += 1
+                    # average color
+                    outPx[xPos, yPos] = (
+                        int(redSum / count),
+                        int(greenSum / count),
+                        int(blueSum / count)
+                    )
+                    filledThisRound.append((xPos, yPos))
+
+            # if nothing could be filled, break to avoid infinite loop
+            if not filledThisRound:
+                break
+
+            # remove those filled in this pass
+            for pos in filledThisRound:
+                unfilledPositions.remove(pos)
 
         return output
 
 
 class DemoUtilities:
     def DemoCompressedJaggedImage(packedPixels):
-        height   = len(packedPixels)
+        height = len(packedPixels)
         maxWidth = max(len(row) for row in packedPixels)
 
         jagged = Image.new("RGB", (maxWidth, height), (0, 0, 0))
@@ -182,9 +206,9 @@ class DemoUtilities:
         return jagged
 
     def DemoCompressedBlackFillImage(packedPixels, removedList, originalWidth):
-        height   = len(packedPixels)
-        filled   = Image.new("RGB", (originalWidth, height))
-        outPx    = filled.load()
+        height = len(packedPixels)
+        filled = Image.new("RGB", (originalWidth, height))
+        outPx = filled.load()
 
         # black fill
         for y in range(height):
@@ -196,7 +220,7 @@ class DemoUtilities:
             removedMap.setdefault(ry, []).append(rx)
 
         for y, rowData in enumerate(packedPixels):
-            dataIndex   = 0
+            dataIndex = 0
             thisRemoved = removedMap.get(y, [])
             for x in range(originalWidth):
                 if x not in thisRemoved:
