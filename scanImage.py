@@ -1,7 +1,9 @@
 from PIL import Image
 from numba import cuda
 import numpy as np
-import ari
+from arithmetic_compressor import AECompressor
+from arithmetic_compressor.models import StaticModel
+import os
 
 class ColumnCompression:
     def CompressedEveryOther(img):
@@ -57,6 +59,7 @@ class ColumnCompression:
         return image
 
     def ColumnCompression(img):
+        print("Running Column Compression")
         compressedImage = ColumnCompression.CompressedEveryOther(img)
         compressedImage.save("ColumnCompression/Compressed.bmp", format="BMP")
 
@@ -195,6 +198,23 @@ class SimilarityCompressor:
 
         return output
 
+    def RunSimilarity(img):
+        for mode, folder in [
+            ('everyOtherRow','CompressSimilarity/everyOtherRow'),
+            ('everyRow','CompressSimilarity/everyRow'),
+            ('full','CompressSimilarity/full')
+        ]:
+            print(f"Running Similarity Compression with mode: {mode}")
+            packedPixels, removedList, w, h = SimilarityCompressor.CompressSimilarity(img, similarity=0.90, mode=mode)
+            jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
+            jaggedImg.save(f"{folder}/compressedJagged.bmp", format="BMP")
+            blackfillImg = DemoUtilities.DemoCompressedBlackFillImage(packedPixels, removedList, w)
+            blackfillImg.save(f"{folder}/compressedBlackfill.bmp", format="BMP")
+            PixelReductionReporter.ReportPixelReduction(img, removedList)
+            ArithmeticCompressor.CompareSize(removedList, "image.bmp")
+            decompressedImg = SimilarityCompressor.DecompressSimilarity(packedPixels, removedList, w, h)
+            decompressedImg.save(f"{folder}/Decompressed.bmp", format="BMP")
+
 class DemoUtilities:
     def DemoCompressedJaggedImage(packedPixels):
         height = len(packedPixels)
@@ -239,22 +259,6 @@ class PixelReductionReporter:
         print("Original pixel count:" + str(origPixels))
         print("Removed pixel count:" + str(removedCount))
         print("Pixel reduction:" + str(round(pixelReduction, 2)) + "%")
-
-class SimilarityWorkflow:
-    def RunSimilarity(img):
-        for mode, folder in [
-            ('everyOtherRow','CompressSimilarity/everyOtherRow'),
-            ('everyRow','CompressSimilarity/everyRow'),
-            ('full','CompressSimilarity/full')
-        ]:
-            packedPixels, removedList, w, h = SimilarityCompressor.CompressSimilarity(img, similarity=0.90, mode=mode)
-            jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
-            jaggedImg.save(f"{folder}/compressedJagged.bmp", format="BMP")
-            blackfillImg = DemoUtilities.DemoCompressedBlackFillImage(packedPixels, removedList, w)
-            blackfillImg.save(f"{folder}/compressedBlackfill.bmp", format="BMP")
-            PixelReductionReporter.ReportPixelReduction(img, removedList)
-            decompressedImg = SimilarityCompressor.DecompressSimilarity(packedPixels, removedList, w, h)
-            decompressedImg.save(f"{folder}/Decompressed.bmp", format="BMP")
 
 class CertaintySimilarityCompressor:
     def CompressWithCertainty(img, similarityThreshold, mode):
@@ -391,23 +395,23 @@ class CertaintySimilarityCompressor:
             ('everyRow', 'CertaintySimilarity/everyRow'),
             ('full', 'CertaintySimilarity/full')
         ]:
+            print(f"Running Certainty Similarity Compression with mode: {mode}")
             packedPixels, removedList, w, h = CertaintySimilarityCompressor.CompressWithCertainty(img, similarityThreshold=0.60, mode=mode)
             jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
             jaggedImg.save(f"{folder}/compressedJagged.bmp", format="BMP")
             blackfillImg = DemoUtilities.DemoCompressedBlackFillImage(packedPixels, removedList, w)
             blackfillImg.save(f"{folder}/compressedBlackfill.bmp", format="BMP")
             PixelReductionReporter.ReportPixelReduction(img, removedList)
+            ArithmeticCompressor.CompareSize(removedList, "image.bmp")
             decompressedImg = CertaintySimilarityCompressor.DecompressSimilarityAdaptive(packedPixels, removedList, w, h)
             decompressedImg.save(f"{folder}/Decompressed.bmp", format="BMP")
 
 class OptimalMatcher:
     @cuda.jit
     def _gpu_find_best_matches(rgbFlat, bestMatches, bestDiffs, width, height):
-        """
-        Each GPU thread handles one pixel at index i.
-        rgbFlat is a 3D uint8 array of shape (height, width, 3).
-        bestMatches and bestDiffs are 1D arrays of length width*height.
-        """
+        #Each GPU thread handles one pixel at index i.
+        #rgbFlat is a 3D uint8 array of shape (height, width, 3).
+        #bestMatches and bestDiffs are 1D arrays of length width*height
         i = cuda.grid(1)
         total = width * height
         if i >= total:
@@ -608,7 +612,7 @@ class OptimalMatcher:
         return output
 
     def RunOptimalMatcher(img):
-        #80% similarity threshold
+        print("80 percent similarity threshold")
         packedPixels, mapping, removedList, w, h = OptimalMatcher.CompressOptimal(img, similarityThreshold=0.80)
 
         jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
@@ -618,12 +622,13 @@ class OptimalMatcher:
         blackfillImg.save("OptimalMatcher/80Percent/compressedBlackfill.bmp", format="BMP")
 
         PixelReductionReporter.ReportPixelReduction(img, removedList)
+        ArithmeticCompressor.CompareSize(removedList, "image.bmp")
 
         decompressedImg = OptimalMatcher.DecompressOptimal(packedPixels, mapping, removedList, w, h)
         decompressedImg.save("OptimalMatcher/80Percent/Decompressed.bmp", format="BMP")
 
 
-        #95% similarity threshold
+        print("95 percent similarity threshold")
         packedPixels, mapping, removedList, w, h = OptimalMatcher.CompressOptimal(img, similarityThreshold=0.95)
 
         jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
@@ -633,11 +638,12 @@ class OptimalMatcher:
         blackfillImg.save("OptimalMatcher/95Percent/compressedBlackfill.bmp", format="BMP")
 
         PixelReductionReporter.ReportPixelReduction(img, removedList)
+        ArithmeticCompressor.CompareSize(removedList, "image.bmp")
 
         decompressedImg = OptimalMatcher.DecompressOptimal(packedPixels, mapping, removedList, w, h)
         decompressedImg.save("OptimalMatcher/95Percent/Decompressed.bmp", format="BMP")
 
-        #99% similarity threshold
+        print("99 percent similarity threshold")
         packedPixels, mapping, removedList, w, h = OptimalMatcher.CompressOptimal(img, similarityThreshold=0.99)
 
         jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
@@ -647,9 +653,91 @@ class OptimalMatcher:
         blackfillImg.save("OptimalMatcher/99Percent/compressedBlackfill.bmp", format="BMP")
 
         PixelReductionReporter.ReportPixelReduction(img, removedList)
+        ArithmeticCompressor.CompareSize(removedList, "image.bmp")
 
         decompressedImg = OptimalMatcher.DecompressOptimal(packedPixels, mapping, removedList, w, h)
         decompressedImg.save("OptimalMatcher/99Percent/Decompressed.bmp", format="BMP")
+
+
+class ArithmeticCompressor:
+
+    def EncodeRemovedPositions(removedPositions):
+        byteList = []
+        for position in removedPositions:
+            x = position[0]
+            y = position[1]
+            # Convert x to two bytes
+            xHigh = x >> 8
+            xLow = x & 0xFF
+            byteList.append(xHigh)
+            byteList.append(xLow)
+            # Convert y to two bytes
+            yHigh = y >> 8
+            yLow = y & 0xFF
+            byteList.append(yHigh)
+            byteList.append(yLow)
+        return bytes(byteList)
+
+    def BuildStaticModel(dataBytes):
+        # Count occurrences of each symbol
+        frequencies = {}
+        for symbol in dataBytes:
+            if symbol not in frequencies:
+                frequencies[symbol] = 0
+            frequencies[symbol] = frequencies[symbol] + 1
+
+        totalSymbols = len(dataBytes)
+        # Build probability dictionary
+        probabilityDict = {}
+        for symbol in frequencies:
+            count = frequencies[symbol]
+            probability = count / totalSymbols
+            probabilityDict[symbol] = probability
+
+        return StaticModel(probabilityDict)
+
+    def Compress(removedPositions):
+        dataBytes = ArithmeticCompressor.EncodeRemovedPositions(removedPositions)
+        model = ArithmeticCompressor.BuildStaticModel(dataBytes)
+        coder = AECompressor(model)
+
+        # Convert bytes to list of integer symbols
+        symbolsList = []
+        for b in dataBytes:
+            symbolsList.append(b)
+
+        compressedBits = coder.compress(symbolsList)
+        return compressedBits
+
+    def CompareSize(removedPositions, originalImagePath):
+        compressedBits = ArithmeticCompressor.Compress(removedPositions)
+
+        # Count number of bits
+        numberOfBits = 0
+        for bit in compressedBits:
+            numberOfBits = numberOfBits + 1
+
+        # Convert bits to bytes by rounding up
+        if numberOfBits % 8 == 0:
+            encodedSize = numberOfBits // 8
+        else:
+            encodedSize = (numberOfBits // 8) + 1
+
+        try:
+            originalSize = os.path.getsize(originalImagePath)
+        except OSError:
+            originalSize = -1
+
+        if originalSize > 0:
+            percent = (encodedSize / originalSize) * 100.0
+            print("Original image size (bytes): " + str(originalSize))
+            print("Encoded removedPositions size (bytes): " + str(encodedSize))
+            print("Encoded size is " + str(round(percent, 2)) + " percent of original")
+        else:
+            print("Original image size: unavailable")
+            print("Encoded removedPositions size (bytes): " + str(encodedSize))
+
+        return compressedBits
 
 if __name__ == "__main__":
     img = Image.open("image.png").convert("RGB")
@@ -658,7 +746,7 @@ if __name__ == "__main__":
     #Simply remove every other column and then to decompress it,
     #I take the average of the neighbors of the removed pixels.
     
-    #ColumnCompression.ColumnCompression(img)
+    ColumnCompression.ColumnCompression(img)
 
 
     #I compare the similarity of each pixel to its neighbors to try to keep up image quality
@@ -669,7 +757,7 @@ if __name__ == "__main__":
     # it ended up looking like an interesting abstract painting, but it gave me the idea to do something similar with trying to find
     # the least amount of pixels to determine the closest average with less certainty.
     
-    #SimilarityWorkflow.RunSimilarity(img)
+    SimilarityCompressor.RunSimilarity(img)
 
 
     #added another class for a slightly different way to get similar pixels. 
@@ -679,7 +767,7 @@ if __name__ == "__main__":
     # That doesn't mean they will be removed but that means that there is a possibility they could be. 
     # All pixels that will be removed can not be used to generate the average for other pixels.
     
-    #CertaintySimilarityCompressor.CertaintySimilarityWorkflow(img)
+    CertaintySimilarityCompressor.CertaintySimilarityWorkflow(img)
 
 
     #The next idea I had was to try to have 1 pixel predict multiple pixels even if its not nearby. Just store array data, and then that one pixel can't be removed.
