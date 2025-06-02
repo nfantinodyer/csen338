@@ -661,17 +661,25 @@ class OptimalMatcher:
 
 class ArithmeticCompressor:
 
+    @cuda.jit
+    def _GpuCountFrequencies(dataFlat, freqOut, length):
+        #Each GPU thread reads one byte from dataFlat and increments freqOut[byteValue]
+        i = cuda.grid(1)
+        if i < length:
+            symbol = dataFlat[i]
+            cuda.atomic.add(freqOut, symbol, 1)
+
     def EncodeRemovedPositions(removedPositions):
         byteList = []
         for position in removedPositions:
             x = position[0]
             y = position[1]
-            # Convert x to two bytes
+            #Convert x to two bytes
             xHigh = x >> 8
             xLow = x & 0xFF
             byteList.append(xHigh)
             byteList.append(xLow)
-            # Convert y to two bytes
+            #Convert y to two bytes
             yHigh = y >> 8
             yLow = y & 0xFF
             byteList.append(yHigh)
@@ -679,20 +687,29 @@ class ArithmeticCompressor:
         return bytes(byteList)
 
     def BuildStaticModel(dataBytes):
-        # Count occurrences of each symbol
-        frequencies = {}
-        for symbol in dataBytes:
-            if symbol not in frequencies:
-                frequencies[symbol] = 0
-            frequencies[symbol] = frequencies[symbol] + 1
+        #Count occurrences of each symbol
+        length = len(dataBytes)
+        dataFlat = np.frombuffer(dataBytes, dtype=np.uint8)
 
-        totalSymbols = len(dataBytes)
-        # Build probability dictionary
+        #Prepare GPU frequency array
+        freqOut = np.zeros(256, dtype=np.int32)
+        d_dataFlat = cuda.to_device(dataFlat)
+        d_freqOut = cuda.to_device(freqOut)
+
+        threadsPerBlock = 256
+        blocksPerGrid = (length + (threadsPerBlock - 1)) // threadsPerBlock
+        ArithmeticCompressor._GpuCountFrequencies[blocksPerGrid, threadsPerBlock](
+            d_dataFlat, d_freqOut, length
+        )
+        d_freqOut.copy_to_host(freqOut)
+
+        totalSymbols = length
         probabilityDict = {}
-        for symbol in frequencies:
-            count = frequencies[symbol]
-            probability = count / totalSymbols
-            probabilityDict[symbol] = probability
+        for symbol in range(256):
+            count = int(freqOut[symbol])
+            if count > 0:
+                probability = count / totalSymbols
+                probabilityDict[symbol] = probability
 
         return StaticModel(probabilityDict)
 
@@ -701,7 +718,6 @@ class ArithmeticCompressor:
         model = ArithmeticCompressor.BuildStaticModel(dataBytes)
         coder = AECompressor(model)
 
-        # Convert bytes to list of integer symbols
         symbolsList = []
         for b in dataBytes:
             symbolsList.append(b)
@@ -712,12 +728,12 @@ class ArithmeticCompressor:
     def CompareSize(removedPositions, originalImagePath):
         compressedBits = ArithmeticCompressor.Compress(removedPositions)
 
-        # Count number of bits
+        #count number of bits
         numberOfBits = 0
         for bit in compressedBits:
             numberOfBits = numberOfBits + 1
 
-        # Convert bits to bytes by rounding up
+        #convert bits to bytes by rounding up
         if numberOfBits % 8 == 0:
             encodedSize = numberOfBits // 8
         else:
@@ -729,10 +745,9 @@ class ArithmeticCompressor:
             originalSize = -1
 
         if originalSize > 0:
-            percent = (encodedSize / originalSize) * 100.0
             print("Original image size (bytes): " + str(originalSize))
             print("Encoded removedPositions size (bytes): " + str(encodedSize))
-            print("Encoded size is " + str(round(percent, 2)) + " percent of original")
+            print("Compression ratio: " + str(round(originalSize / encodedSize, 2)))
         else:
             print("Original image size: unavailable")
             print("Encoded removedPositions size (bytes): " + str(encodedSize))
