@@ -70,31 +70,47 @@ class ArithmeticCompressor:
         compressedBits = coder.compress(symbolsList)
         return compressedBits
 
-    def CompareSize(removedPositions, originalImagePath):
-        compressedBits = ArithmeticCompressor.Compress(removedPositions)
-
-        #count number of bits
-        numberOfBits = 0
-        for bit in compressedBits:
-            numberOfBits = numberOfBits + 1
-
-        #convert bits to bytes by rounding up
-        if numberOfBits % 8 == 0:
-            encodedSize = numberOfBits // 8
+    @staticmethod
+    def CompareSize(data, originalImagePath):
+        """
+        data may be:
+          - a list of (x,y) tuples             → encode positions (old behavior)
+          - a bytes or bytearray                → treat as raw bytes
+          - a list of ints (0/1 bitmask)       → pack into bytes
+        """
+        # 1) Normalize to a bytes object
+        if isinstance(data, (bytes, bytearray)):
+            dataBytes = bytes(data)
+        elif isinstance(data, list) and data and isinstance(data[0], int):
+            # list of ints (e.g. raw bitmask)
+            dataBytes = bytes(data)
         else:
-            encodedSize = (numberOfBits // 8) + 1
+            # list of tuples: fall back to old position-encoding
+            dataBytes = ArithmeticCompressor.EncodeRemovedPositions(data)
 
+        # 2) Build the static model & compress
+        model = ArithmeticCompressor.BuildStaticModel(dataBytes)
+        coder = AECompressor(model)
+        symbolsList = list(dataBytes)  
+        compressedBits = coder.compress(symbolsList)
+
+        # 3) Count and round bits → bytes
+        numberOfBits = len(compressedBits)
+        encodedSize = (numberOfBits + 7) // 8
+
+        # 4) Report against the original file size
         try:
             originalSize = os.path.getsize(originalImagePath)
         except OSError:
             originalSize = -1
 
         if originalSize > 0:
-            print("Original image size (bytes): " + str(originalSize))
-            print("Encoded removedPositions size (bytes): " + str(encodedSize))
-            print("Compression ratio: " + str(round(originalSize / encodedSize, 2)))
+            print(f"Original image size (bytes): {originalSize}")
+            print(f"Encoded data size (bytes): {encodedSize}")
+            print(f"Compression ratio: {round(originalSize / encodedSize, 2)}")
         else:
-            print("Original image size: unavailable")
-            print("Encoded removedPositions size (bytes): " + str(encodedSize))
+            print(f"Original image size: unavailable")
+            print(f"Encoded data size (bytes): {encodedSize}")
 
         return compressedBits
+

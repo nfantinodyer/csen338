@@ -4,6 +4,7 @@ from scripts.column import ColumnCompression
 from scripts.similarity import SimilarityCompressor
 from scripts.greedySimilarity import CertaintySimilarityCompressor
 from scripts.optimal import OptimalMatcher
+from scripts.bitSimilarity import BitSimilarityCompressor
 
 if __name__ == "__main__":
     img = Image.open("image.png").convert("RGB")
@@ -38,7 +39,12 @@ if __name__ == "__main__":
 
     #The next idea I had was to try to have 1 pixel predict multiple pixels even if its not nearby. Just store array data, and then that one pixel can't be removed.
     #So we go through the whole image and get the pixels that are the closest within 80% certainty and then keep one source that will be used to be replicated in the spots later.
+    
     OptimalMatcher.RunOptimalMatcher(img)
+
 
     #need to compare how much is really compressed since data transfer could be more than the original image with all my experiments.
     #I'll use artithmatic coding to compress the data and then compare the size of the compressed data to the original image.
+
+    #used bits to tell if a pixel is removed or not, and then the data is sent to the decoder instead of sending an array of coordinates.
+    BitSimilarityCompressor.BitSimilarityWorkflow(img)
