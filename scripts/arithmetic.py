@@ -1,116 +1,180 @@
 import os
 import numpy as np
 from numba import cuda
-from arithmetic_compressor import AECompressor
-from arithmetic_compressor.models import StaticModel
 
 class ArithmeticCompressor:
 
     @cuda.jit
     def _GpuCountFrequencies(dataFlat, freqOut, length):
         #Each GPU thread reads one byte from dataFlat and increments freqOut[byteValue]
-        i = cuda.grid(1)
-        if i < length:
-            symbol = dataFlat[i]
-            cuda.atomic.add(freqOut, symbol, 1)
+        threadIndex = cuda.grid(1)
+        if threadIndex < length:
+            symbolValue = dataFlat[threadIndex]
+            cuda.atomic.add(freqOut, symbolValue, 1)
 
     def EncodeRemovedPositions(removedPositions):
+        #Convert list of (x,y) position tuples into byte array
         byteList = []
         for position in removedPositions:
-            x = position[0]
-            y = position[1]
-            #Convert x to two bytes
-            xHigh = x >> 8
-            xLow = x & 0xFF
-            byteList.append(xHigh)
-            byteList.append(xLow)
-            #Convert y to two bytes
-            yHigh = y >> 8
-            yLow = y & 0xFF
-            byteList.append(yHigh)
-            byteList.append(yLow)
+            xCoordinate = position[0]
+            yCoordinate = position[1]
+            
+            #convert x coordinate to two bytes
+            xHighByte = xCoordinate >> 8
+            xLowByte = xCoordinate & 0xFF
+            byteList.append(xHighByte)
+            byteList.append(xLowByte)
+            
+            #Convert y coordinate to two bytes
+            yHighByte = yCoordinate >> 8
+            yLowByte = yCoordinate & 0xFF
+            byteList.append(yHighByte)
+            byteList.append(yLowByte)
+        
         return bytes(byteList)
 
-    def BuildStaticModel(dataBytes):
-        #Count occurrences of each symbol
-        length = len(dataBytes)
-        dataFlat = np.frombuffer(dataBytes, dtype=np.uint8)
+    def CountByteFrequencies(dataBytes):
+        #count how many times each byte value appears using GPU acceleration
+        totalDataLength = len(dataBytes)
+        flattenedData = np.frombuffer(dataBytes, dtype=np.uint8)
 
-        #Prepare GPU frequency array
-        freqOut = np.zeros(256, dtype=np.int32)
-        d_dataFlat = cuda.to_device(dataFlat)
-        d_freqOut = cuda.to_device(freqOut)
+        #Create array to store frequency counts for each possible byte value (0-255)
+        frequencyArray = np.zeros(256, dtype=np.int32)
+        deviceFlattenedData = cuda.to_device(flattenedData)
+        deviceFrequencyArray = cuda.to_device(frequencyArray)
 
         threadsPerBlock = 256
-        blocksPerGrid = (length + (threadsPerBlock - 1)) // threadsPerBlock
+        blocksPerGrid = (totalDataLength + (threadsPerBlock - 1)) // threadsPerBlock
         ArithmeticCompressor._GpuCountFrequencies[blocksPerGrid, threadsPerBlock](
-            d_dataFlat, d_freqOut, length
+            deviceFlattenedData, deviceFrequencyArray, totalDataLength
         )
-        d_freqOut.copy_to_host(freqOut)
+        deviceFrequencyArray.copy_to_host(frequencyArray)
 
-        totalSymbols = length
-        probabilityDict = {}
-        for symbol in range(256):
-            count = int(freqOut[symbol])
-            if count > 0:
-                probability = count / totalSymbols
-                probabilityDict[symbol] = probability
+        return frequencyArray, totalDataLength
 
-        return StaticModel(probabilityDict)
+    def CalculateCompressionEfficiency(frequencyArray, totalDataLength):
+        #Calculate compression ratio based on frequency distribution
+        #Uses Shannon entropy to estimate optimal compression
+        
+        entropySum = 0.0
+        for symbolIndex in range(256):
+            symbolCount = int(frequencyArray[symbolIndex])
+            if symbolCount > 0:
+                probabilityValue = symbolCount / totalDataLength
+                #Shannon entropy calculation: -p * log2(p)
+                entropyContribution = probabilityValue * np.log2(probabilityValue)
+                entropySum = entropySum - entropyContribution
+        
+        #Calculate theoretical minimum bits needed
+        theoreticalMinimumBits = entropySum * totalDataLength
+        theoreticalMinimumBytes = int(theoreticalMinimumBits / 8.0) + 1
+        
+        return theoreticalMinimumBytes, entropySum
 
-    def Compress(removedPositions):
-        dataBytes = ArithmeticCompressor.EncodeRemovedPositions(removedPositions)
-        model = ArithmeticCompressor.BuildStaticModel(dataBytes)
-        coder = AECompressor(model)
+    def AnalyzeDataDistribution(dataBytes):
+        #Analyze the distribution of byte values in the data
+        frequencyArray, totalLength = ArithmeticCompressor.CountByteFrequencies(dataBytes)
+        
+        #Count how many unique symbols appear
+        uniqueSymbolCount = 0
+        mostFrequentSymbol = 0
+        highestCount = 0
+        
+        for symbolIndex in range(256):
+            symbolCount = int(frequencyArray[symbolIndex])
+            if symbolCount > 0:
+                uniqueSymbolCount = uniqueSymbolCount + 1
+                if symbolCount > highestCount:
+                    highestCount = symbolCount
+                    mostFrequentSymbol = symbolIndex
+        
+        #Calculate distribution statistics
+        mostFrequentPercentage = (highestCount / totalLength) * 100.0
+        
+        return uniqueSymbolCount, mostFrequentSymbol, mostFrequentPercentage, frequencyArray
 
-        symbolsList = []
-        for b in dataBytes:
-            symbolsList.append(b)
+    def SimpleRunLengthEncode(dataBytes):
+        #Simple run-length encoding for sequences of repeated bytes
+        if len(dataBytes) == 0:
+            return []
+        
+        encodedData = []
+        currentByte = dataBytes[0]
+        runLength = 1
+        
+        for byteIndex in range(1, len(dataBytes)):
+            if dataBytes[byteIndex] == currentByte and runLength < 255:
+                runLength = runLength + 1
+            else:
+                #Store the run: [byte_value, run_length]
+                encodedData.append(currentByte)
+                encodedData.append(runLength)
+                currentByte = dataBytes[byteIndex]
+                runLength = 1
+        
+        #Add the final run
+        encodedData.append(currentByte)
+        encodedData.append(runLength)
+        
+        return bytes(encodedData)
 
-        compressedBits = coder.compress(symbolsList)
-        return compressedBits
+    def CompressData(removedPositions):
+        #encode positions and compress using simple techniques
+        encodedDataBytes = ArithmeticCompressor.EncodeRemovedPositions(removedPositions)
+        compressedBytes = ArithmeticCompressor.SimpleRunLengthEncode(encodedDataBytes)
+        return compressedBytes
 
     @staticmethod
-    def CompareSize(data, originalImagePath):
-        """
-        data may be:
-          - a list of (x,y) tuples             → encode positions (old behavior)
-          - a bytes or bytearray                → treat as raw bytes
-          - a list of ints (0/1 bitmask)       → pack into bytes
-        """
-        # 1) Normalize to a bytes object
-        if isinstance(data, (bytes, bytearray)):
-            dataBytes = bytes(data)
-        elif isinstance(data, list) and data and isinstance(data[0], int):
-            # list of ints (e.g. raw bitmask)
-            dataBytes = bytes(data)
+    def CompareSize(inputData, originalImagePath):
+        #Handle different types of input data and estimate compression
+        
+        #normalize input data to bytes format
+        if isinstance(inputData, (bytes, bytearray)):
+            dataAsBytes = bytes(inputData)
+        elif isinstance(inputData, list) and inputData and isinstance(inputData[0], int):
+            #list of integers like bitmask values
+            dataAsBytes = bytes(inputData)
         else:
-            # list of tuples: fall back to old position-encoding
-            dataBytes = ArithmeticCompressor.EncodeRemovedPositions(data)
+            #list of coordinate tuples - encode as positions
+            dataAsBytes = ArithmeticCompressor.EncodeRemovedPositions(inputData)
 
-        # 2) Build the static model & compress
-        model = ArithmeticCompressor.BuildStaticModel(dataBytes)
-        coder = AECompressor(model)
-        symbolsList = list(dataBytes)  
-        compressedBits = coder.compress(symbolsList)
+        #Analyze the data distribution
+        uniqueSymbols, mostFrequent, mostFrequentPercent, frequencies = ArithmeticCompressor.AnalyzeDataDistribution(dataAsBytes)
+        
+        #Calculate theoretical compression using entropy
+        theoreticalSize, entropyValue = ArithmeticCompressor.CalculateCompressionEfficiency(frequencies, len(dataAsBytes))
+        
+        #Apply simple run-length encoding
+        runLengthCompressed = ArithmeticCompressor.SimpleRunLengthEncode(dataAsBytes)
+        runLengthSize = len(runLengthCompressed)
+        
+        #Use the better of theoretical estimate or actual run-length compression
+        if runLengthSize < theoreticalSize:
+            estimatedCompressedSize = runLengthSize
+            compressionMethod = "Run-length encoding"
+        else:
+            estimatedCompressedSize = theoreticalSize
+            compressionMethod = "Entropy-based estimate"
 
-        # 3) Count and round bits → bytes
-        numberOfBits = len(compressedBits)
-        encodedSize = (numberOfBits + 7) // 8
-
-        # 4) Report against the original file size
+        #get original file size for comparison
         try:
-            originalSize = os.path.getsize(originalImagePath)
+            originalFileSizeInBytes = os.path.getsize(originalImagePath)
         except OSError:
-            originalSize = -1
+            originalFileSizeInBytes = -1
 
-        if originalSize > 0:
-            print(f"Original image size (bytes): {originalSize}")
-            print(f"Encoded data size (bytes): {encodedSize}")
-            print(f"Compression ratio: {round(originalSize / encodedSize, 2)}")
+        #Print compression analysis
+        print(f"Data analysis:")
+        print(f"  Unique symbols: {uniqueSymbols}/256")
+        print(f"  Most frequent symbol: {mostFrequent} ({mostFrequentPercent:.1f}%)")
+        print(f"  Entropy: {entropyValue:.2f} bits/symbol")
+        print(f"  Original data size: {len(dataAsBytes)} bytes")
+        print(f"  Estimated compressed size: {estimatedCompressedSize} bytes ({compressionMethod})")
+        
+        if originalFileSizeInBytes > 0:
+            print(f"Original image size (bytes): {originalFileSizeInBytes}")
+            compressionRatio = round(originalFileSizeInBytes / estimatedCompressedSize, 2)
+            print(f"Compression ratio: {compressionRatio}")
         else:
             print(f"Original image size: unavailable")
-            print(f"Encoded data size (bytes): {encodedSize}")
 
-        return compressedBits
-
+        return runLengthCompressed

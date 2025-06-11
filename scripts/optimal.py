@@ -1,7 +1,7 @@
 import numpy as np
 from numba import cuda
 from PIL import Image
-from scripts.utils import DemoUtilities
+from scripts.utils import DemoUtilities, PSNR, SSIM
 from scripts.arithmetic import ArithmeticCompressor
 
 class OptimalMatcher:
@@ -208,8 +208,22 @@ class OptimalMatcher:
             outPx[xx, yy] = outPx[sourceX, sourceY]
 
         return output
+    
+    def qualityReport(img, decompressedImg, mode):
+        origGray = np.array(img.convert("L"))
+        decompGray = np.array(decompressedImg.convert("L"))
+
+        # PSNR
+        psnr_val = PSNR.Compute(origGray, decompGray, 255.0)
+        print(f"[{mode}] PSNR: {psnr_val:.2f} dB")
+        # SSIM
+        ssim_calc = SSIM(11, 1.5, 0.01, 0.03, 255.0)
+        ssim_val = ssim_calc.ComputeSSIM(origGray, decompGray)
+        print(f"[{mode}] SSIM: {ssim_val:.4f}")
 
     def RunOptimalMatcher(img):
+        print()
+        print("Running Optimal Matcher Compression")
         print("80 percent similarity threshold")
         packedPixels, mapping, removedList, w, h = OptimalMatcher.CompressOptimal(img, similarityThreshold=0.80)
 
@@ -225,6 +239,7 @@ class OptimalMatcher:
         decompressedImg = OptimalMatcher.DecompressOptimal(packedPixels, mapping, removedList, w, h)
         decompressedImg.save("OptimalMatcher/80Percent/Decompressed.bmp", format="BMP")
 
+        OptimalMatcher.qualityReport(img, decompressedImg, "80% Similarity")
 
         print("95 percent similarity threshold")
         packedPixels, mapping, removedList, w, h = OptimalMatcher.CompressOptimal(img, similarityThreshold=0.95)
@@ -241,6 +256,8 @@ class OptimalMatcher:
         decompressedImg = OptimalMatcher.DecompressOptimal(packedPixels, mapping, removedList, w, h)
         decompressedImg.save("OptimalMatcher/95Percent/Decompressed.bmp", format="BMP")
 
+        OptimalMatcher.qualityReport(img, decompressedImg, "95% Similarity")
+
         print("99 percent similarity threshold")
         packedPixels, mapping, removedList, w, h = OptimalMatcher.CompressOptimal(img, similarityThreshold=0.99)
 
@@ -255,3 +272,5 @@ class OptimalMatcher:
 
         decompressedImg = OptimalMatcher.DecompressOptimal(packedPixels, mapping, removedList, w, h)
         decompressedImg.save("OptimalMatcher/99Percent/Decompressed.bmp", format="BMP")
+
+        OptimalMatcher.qualityReport(img, decompressedImg, "99% Similarity")

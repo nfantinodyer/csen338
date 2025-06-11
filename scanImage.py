@@ -5,6 +5,8 @@ from scripts.similarity import SimilarityCompressor
 from scripts.greedySimilarity import CertaintySimilarityCompressor
 from scripts.optimal import OptimalMatcher
 from scripts.bitSimilarity import BitSimilarityCompressor
+from scripts.blockBased import BlockBasedCompressor
+from scripts.blockBasedColor import BlockBasedColorCompressor
 
 if __name__ == "__main__":
     img = Image.open("image.png").convert("RGB")
@@ -48,3 +50,7 @@ if __name__ == "__main__":
 
     #used bits to tell if a pixel is removed or not, and then the data is sent to the decoder instead of sending an array of coordinates.
     BitSimilarityCompressor.BitSimilarityWorkflow(img)
+
+    #To be more like jpeg compression, I want to use a block based compression method.
+    BlockBasedCompressor.BlockBasedCompressionWorkflow(img)
+    BlockBasedColorCompressor.BlockBasedColorCompressionWorkflow(img)

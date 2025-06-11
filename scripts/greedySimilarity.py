@@ -1,5 +1,6 @@
 from PIL import Image
-from scripts.utils import DemoUtilities
+import numpy as np
+from scripts.utils import DemoUtilities, PSNR, SSIM
 from scripts.arithmetic import ArithmeticCompressor
 
 class CertaintySimilarityCompressor:
@@ -137,6 +138,7 @@ class CertaintySimilarityCompressor:
             ('everyRow', 'CertaintySimilarity/everyRow'),
             ('full', 'CertaintySimilarity/full')
         ]:
+            print()
             print(f"Running Certainty Similarity Compression with mode: {mode}")
             packedPixels, removedList, w, h = CertaintySimilarityCompressor.CompressWithCertainty(img, similarityThreshold=0.60, mode=mode)
             jaggedImg = DemoUtilities.DemoCompressedJaggedImage(packedPixels)
@@ -147,3 +149,13 @@ class CertaintySimilarityCompressor:
             ArithmeticCompressor.CompareSize(removedList, "image.bmp")
             decompressedImg = CertaintySimilarityCompressor.DecompressSimilarityAdaptive(packedPixels, removedList, w, h)
             decompressedImg.save(f"{folder}/Decompressed.bmp", format="BMP")
+            origGray = np.array(img.convert("L"))
+            decompGray = np.array(decompressedImg.convert("L"))
+
+            # PSNR
+            psnr_val = PSNR.Compute(origGray, decompGray, 255.0)
+            print(f"[{mode}] PSNR: {psnr_val:.2f} dB")
+            # SSIM
+            ssim_calc = SSIM(11, 1.5, 0.01, 0.03, 255.0)
+            ssim_val = ssim_calc.ComputeSSIM(origGray, decompGray)
+            print(f"[{mode}] SSIM: {ssim_val:.4f}")

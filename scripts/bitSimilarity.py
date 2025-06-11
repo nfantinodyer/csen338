@@ -1,5 +1,6 @@
 from PIL import Image
-from scripts.utils import DemoUtilities
+import numpy as np
+from scripts.utils import DemoUtilities, PSNR, SSIM
 from scripts.arithmetic import ArithmeticCompressor
 
 class BitSimilarityCompressor:
@@ -118,6 +119,7 @@ class BitSimilarityCompressor:
         modes = ['everyOtherRow', 'everyRow', 'full']
         for mode in modes:
             folder = 'BitSimilarity/' + mode
+            print()
             print("Running Bit Similarity Compression with mode: " + mode)
             pixels, removed, mask, w, h = BitSimilarityCompressor.CompressBitSimilarity(img, 0.90, mode)
             # save jagged and blackfill images
@@ -134,3 +136,14 @@ class BitSimilarityCompressor:
             # decompress to verify
             decompressed = BitSimilarityCompressor.DecompressBitSimilarity(pixels, removed, w, h)
             decompressed.save(folder + "/Decompressed.bmp", format="BMP")
+
+            origGray = np.array(img.convert("L"))
+            decompGray = np.array(decompressed.convert("L"))
+
+            # PSNR
+            psnr_val = PSNR.Compute(origGray, decompGray, 255.0)
+            print(f"[{mode}] PSNR: {psnr_val:.2f} dB")
+            # SSIM
+            ssim_calc = SSIM(11, 1.5, 0.01, 0.03, 255.0)
+            ssim_val = ssim_calc.ComputeSSIM(origGray, decompGray)
+            print(f"[{mode}] SSIM: {ssim_val:.4f}")

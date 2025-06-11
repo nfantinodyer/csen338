@@ -1,4 +1,6 @@
 from PIL import Image
+import numpy as np
+from scripts.utils import PSNR, SSIM
 
 class ColumnCompression:
     def CompressedEveryOther(img):
@@ -60,3 +62,14 @@ class ColumnCompression:
 
         decompressedImage = ColumnCompression.DecompressedEveryOther(compressedImage)
         decompressedImage.save("ColumnCompression/Decompressed.bmp", format="BMP")
+
+        origGray = np.array(img.convert("L"))
+        decompGray = np.array(decompressedImage.convert("L"))
+
+        # PSNR
+        psnr_val = PSNR.Compute(origGray, decompGray, 255.0)
+        print(f"ColumnCompression PSNR: {psnr_val:.2f} dB")
+        # SSIM
+        ssim_calc = SSIM(11, 1.5, 0.01, 0.03, 255.0)
+        ssim_val = ssim_calc.ComputeSSIM(origGray, decompGray)
+        print(f"ColumnCompression SSIM: {ssim_val:.4f}")
